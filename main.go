@@ -18,12 +18,14 @@ type Pass struct {
 }
 
 func main() {
-	var res, fl, psw, usr string
+	var res, fl, psw, usr, km string
 	var erm, c, d, ls, g bool
 
 	flag.StringVar(&fl, "f", "", "Filename")
 	flag.StringVar(&res, "r", "", "Resource name")
 	flag.StringVar(&usr, "u", "", "User name")
+	flag.StringVar(&km, "k", "",
+		"Email identifying key used to encrypt file")
 
 	flag.BoolVar(&c, "c", false,
 		"Create new password for resource")
@@ -39,6 +41,18 @@ func main() {
 	flag.Parse()
 
 	pf, e := readFile(fl)
+	if e == nil && (res == "" || usr == "" ||
+		(km == "" && (c || d))) {
+		var opt string
+		if usr == "" {
+			opt = "-u"
+		} else if res == "" {
+			opt = "-r"
+		} else if km == "" && (c || d) {
+			opt = "-k"
+		}
+		e = fmt.Errorf("Cannot use empty string with option %s", opt)
+	}
 	if e == nil {
 		if c || d {
 			if c {
@@ -47,7 +61,7 @@ func main() {
 				e = delRes(pf, res)
 			}
 			if e == nil {
-				e = writeToFl(pf, fl)
+				e = writeToFl(pf, fl, km)
 			}
 		} else {
 			e = getRes(pf, res, usr, ls)
@@ -127,12 +141,13 @@ func delRes(pf PsFile, res string) (e error) {
 	return
 }
 
-func writeToFl(pf PsFile, fl string) (e error) {
+func writeToFl(pf PsFile, fl, km string) (e error) {
 	var bs []byte
 	bs, e = yaml.Marshal(pf)
 	if e == nil {
-		cme := exec.Command("gpg", "--encrypt",
-			"--default-recipient-self", "--armor", "--output", fl)
+		cme := exec.Command("gpg", "--encrypt", "--yes",
+			"--no-verbose", "--recipient", km, "--armor",
+			"--output", fl)
 		cme.Stdin = bytes.NewBuffer(bs)
 		e = cme.Run()
 	}
