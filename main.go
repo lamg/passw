@@ -1,200 +1,140 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
-	"gopkg.in/yaml.v2"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
+
+	"github.com/spf13/afero"
+	"gopkg.in/yaml.v2"
 )
 
+// PsFile is the data structure being [de]serialized in the text
+// file using YAML format
 type PsFile map[string]map[string][]Pass
 
+// Pass is the data structure representing a created password
 type Pass struct {
+	// Date when password was created
 	Date     time.Time `yaml:"date"`
 	Password string    `yaml:"password"`
 }
 
 func main() {
-	var res, fl, psw, usr, km string
-	var erm, c, d, ls, g bool
+	// [common code command line flags definition]
+	var r, u, f string
+	var c bool
 
-	flag.StringVar(&fl, "f", "", "Filename")
-	flag.StringVar(&res, "r", "", "Resource name")
-	flag.StringVar(&usr, "u", "", "User name")
-	flag.StringVar(&km, "k", "",
-		"Email identifying key used to encrypt file")
+	flag.StringVar(&f, "f", "", "File name")
+	flag.StringVar(&r, "r", "", "Resource name")
+	flag.StringVar(&u, "u", "", "User name")
+	flag.BoolVar(&c, "c", false, "Create new password for resource")
 
-	flag.BoolVar(&c, "c", false,
-		"Create new password for resource")
-	flag.BoolVar(&g, "g", false, "Generate a new password")
-	flag.BoolVar(&erm, "e", false,
-		"Generate an easy to remind password")
-	flag.StringVar(&psw, "p", "",
-		"Predefined password for resource to be created")
-
-	flag.BoolVar(&d, "d", false, "Delete resource")
-
-	flag.BoolVar(&ls, "l", false, "List all passwords for resource")
+	// [second use case command line flags definition]
+	var ad bool
+	flag.BoolVar(&ad, "ad", false,
+		"Call 'apg -n 1' or 'apg -n 1 -a 1 -m 16' when flag absent")
 	flag.Parse()
 
-	pf, e := readFile(fl)
-	if e == nil && (res == "" || usr == "" ||
-		(km == "" && (c || d))) {
-		var opt string
-		if usr == "" {
-			opt = "-u"
-		} else if res == "" {
-			opt = "-r"
-		} else if km == "" && (c || d) {
-			opt = "-k"
-		}
-		e = fmt.Errorf("Cannot use empty string with option %s", opt)
+	af := &afero.Afero{Fs: afero.NewOsFs()}
+	pf, e := readFile(f, af)
+	var password string
+	if !c {
+		// [first use case]
+		password, e = retrieve(r, u, pf)
+	} else {
+		// [second use case]
+		password, e = create(f, r, u, pf, ad, af)
 	}
-	if e == nil {
-		if c || d {
-			if c {
-				e = crtRes(g, erm, pf, res, usr, psw)
-			} else if d {
-				e = delRes(pf, res)
-			}
-			if e == nil {
-				e = writeToFl(pf, fl, km)
-			}
-		} else {
-			e = getRes(pf, res, usr, ls)
-		}
-	}
-
 	ex := 0
-	if e != nil {
-		fmt.Fprintln(os.Stderr, e.Error())
+	if e == nil {
+		fmt.Println(password)
+	} else {
+		fmt.Fprint(os.Stderr, e.Error())
 		ex = 1
 	}
 	os.Exit(ex)
 }
 
-func readFile(fl string) (pf PsFile, e error) {
-	if fl != "" {
+// [common code]
+
+func readFile(fl string, af *afero.Afero) (pf PsFile, e error) {
+	var bs []byte
+	bs, e = af.ReadFile(fl)
+	if e == nil {
 		pf = make(map[string]map[string][]Pass)
-		_, e = os.Stat(fl)
-		var bs []byte
-		if e == nil {
-			cmd := exec.Command("gpg", "--decrypt", fl)
-			bs, e = cmd.Output()
-		}
-		if e == nil {
-			e = yaml.Unmarshal(bs, pf)
-		}
-		if os.IsNotExist(e) {
-			e = nil
-		}
-	} else {
-		e = fmt.Errorf("No file specified")
+		e = yaml.Unmarshal(bs, pf)
 	}
 	return
 }
 
-func crtRes(g, erm bool, pf PsFile, res, usr, psw string) (e error) {
-	_, ok := pf[res]
-	if !ok {
-		pf[res] = make(map[string][]Pass)
-		pf[res][usr] = make([]Pass, 0)
-	}
-	p := Pass{Date: time.Now()}
-	if g {
-		var cmd *exec.Cmd
-		if erm {
-			cmd = exec.Command("apg", "-n", "1")
-		} else {
-			cmd = exec.Command("apg", "-m", "16", "-a", "1", "-n", "1")
-		}
-		var bs []byte
-		bs, e = cmd.Output()
-		if e == nil {
-			psw = string(bs)
-		}
-	}
-	if psw == "" {
-		e = fmt.Errorf("Empty string cannot be used as password")
-	}
+// [end]
+
+// [first use case code]
+func retrieve(resource, user string, pf PsFile) (r string, e error) {
+	var ps []Pass
+	ps, e = retrPs(resource, user, pf)
 	if e == nil {
-		p.Password = psw
-		_, ok = pf[res][usr]
-		if !ok {
-			pf[res][usr] = make([]Pass, 0)
-		}
-		pf[res][usr] = append(pf[res][usr], p)
+		r = ps[len(ps)-1].Password
 	}
 	return
 }
 
-func delRes(pf PsFile, res string) (e error) {
-	_, ok := pf[res]
-	if ok {
-		delete(pf, res)
+func noUser(user string) (e error) {
+	e = fmt.Errorf("No user %s", user)
+	return
+}
+
+func noResource(resource string) (e error) {
+	e = fmt.Errorf("No resource %s", resource)
+	return
+}
+
+// [end]
+
+// [second use case code]
+func create(file, resource, user string, pf PsFile, ad bool, af *afero.Afero) (r string, e error) {
+	var cmd *exec.Cmd
+	if ad {
+		cmd = exec.Command("apg", "-n", "1")
 	} else {
-		e = fmt.Errorf("Resource %s doesn't exists", res)
-	}
-	return
-}
-
-func writeToFl(pf PsFile, fl, km string) (e error) {
-	var bs []byte
-	bs, e = yaml.Marshal(pf)
-	if e == nil {
-		cme := exec.Command("gpg", "--encrypt", "--yes",
-			"--no-verbose", "--recipient", km, "--armor",
-			"--output", fl)
-		cme.Stdin = bytes.NewBuffer(bs)
-		e = cme.Run()
-	}
-	return
-}
-
-func getRes(pf PsFile, res, usr string, ls bool) (e error) {
-	acs, ok := pf[res]
-	if !ok {
-		e = fmt.Errorf("%s not found", res)
+		cmd = exec.Command("apg", "-m", "16", "-a", "1", "-n", "1")
 	}
 	var bs []byte
+	bs, e = cmd.Output()
 	if e == nil {
-		if usr == "" {
-			bs, e = currPsAll(acs)
-		} else {
-			bs, e = currPsUsr(acs, usr)
-		}
+		// deleting new line character
+		r = strings.TrimRight(string(bs), "\n\r")
+		_, e = retrPs(resource, user, pf)
+	}
+	var sr []byte
+	if e == nil {
+		pf[resource][user] = append(pf[resource][user], Pass{
+			Date:     time.Now(),
+			Password: r,
+		})
+		sr, e = yaml.Marshal(pf)
 	}
 	if e == nil {
-		fmt.Println(string(bs))
+		e = af.WriteFile(file, sr, os.ModePerm)
 	}
 	return
 }
 
-type CurrPs struct {
-	User string `yaml:"user"`
-	Pass Pass   `yaml:"pass"`
-}
-
-func currPsAll(acs map[string][]Pass) (bs []byte, e error) {
-	rs, i := make([]CurrPs, len(acs)), 0
-	for k, v := range acs {
-		rs[i], i = CurrPs{User: k, Pass: v[len(v)-1]}, i+1
-	}
-	bs, e = yaml.Marshal(rs)
-	return
-}
-
-func currPsUsr(acs map[string][]Pass, usr string) (bs []byte,
-	e error) {
-	sp, ok := acs[usr]
+func retrPs(resource, user string, pf PsFile) (r []Pass, e error) {
+	um, ok := pf[resource]
 	if ok {
-		p := sp[len(sp)-1]
-		bs, e = yaml.Marshal(p)
+		r, ok = um[user]
+		if !ok || len(r) == 0 {
+			e = noUser(user)
+		}
 	} else {
-		e = fmt.Errorf("Not found user %s", usr)
+		e = noResource(resource)
 	}
 	return
 }
+
+// [end]

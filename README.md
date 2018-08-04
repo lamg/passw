@@ -1,10 +1,18 @@
-# Passw
+# Password manager (pmng)
 
-Passw is a simple password manager which stores passwords in a YAML file encrypted with GPG, using the default key. The use cases are the following, having specified a resource (-r option) (which is something that holds several user accounts, like Facebook, GitHub or GPG if an account means an individual key), an user name (-u option) and a file (-f option):
+The pmng password manager is a simple program for storing passwords associated to resources and user names in a text file using YAML format. It has two use cases:
 
-## Create resource
-Creates a resource with the specified resource name, in case it exists the user and password will be appended to the resource's accounts. The user may choose to generate (-g flag)a new password using `apg`, which by default is called with `-m 16 -a 1 -n 1` arguments. If -e flag is passed then the arguments to `agp` are `-n `. If -g flag isn't present, then the password is the string passed with -p option.
+## Retrieve
+Retrieve a password given a file, resource and user name. A resource can be the Web site name which has the account. User and password have the usual meaning. In this case the command(having F as the file where information is stored, R as resource name, and U as user name) is:
 
-## Delete resource
+```sh
+pmng -r R -u U -f F
+```
 
-## Get resource
+## Create
+Create a password given a file, resource, user name, password and an `-e` flag which alternates between calling `apg` with the default parameters (this means it `apg -n 1` will generate a pronounceable password with length 8 when flag is absent) and calling `apg -n 1 -a 1 -m 16`, which will generate a random character password with length 16 when supplied. With R, U, F having the same above meaning and the `-c` flag distinguishing this call from the previous, the command is:
+
+```
+sh
+pmng -c [-e] -r R -u U -f F
+```
