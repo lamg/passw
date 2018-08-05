@@ -10,7 +10,7 @@ pmng -r R -u U -f F
 ```
 
 ## Create
-Create a password given a file, resource, user name, password and an `-e` flag which alternates between calling `apg` with the default parameters (this means it `apg -n 1` will generate a pronounceable password with length 8 when flag is absent) and calling `apg -n 1 -a 1 -m 16`, which will generate a random character password with length 16 when supplied. With R, U, F having the same above meaning and the `-c` flag distinguishing this call from the previous, the command is:
+Create a password given a file, resource, user name, password and an `-e` flag which alternates between calling `apg -n 1` when present (this means it will generate a pronounceable password with length 8) and calling `apg -n 1 -a 1 -m 16`, which will generate a random character password with length 16 when absent. With R, U, F having the same above meaning and the `-c` flag distinguishing this call from the previous, the command is:
 
 ```
 sh
